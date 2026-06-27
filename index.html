@@ -65,6 +65,7 @@
       <button onclick="window.print()">Print / Save as PDF</button>
       <button class="secondary" onclick="resetDefaults()">Reset User defaults</button>
     </div>
+    <p class="muted">Inputs save automatically in this browser as you type.</p>
     <div class="kpi">
       <div class="tile"><div class="v" id="kpiUtil">—</div><div class="l">Current utilization</div></div>
       <div class="tile"><div class="v" id="kpiTargetBal">—</div><div class="l">Target reported balance</div></div>
@@ -100,9 +101,9 @@
   <section class="card" style="margin-top:16px">
     <h2>5. Mini calendar: cold spend days vs hot pay days</h2>
     <div class="legend">
-      <span><span class="sw" style="background:#dbeafe"></span> Safer spend window</span>
-      <span><span class="sw" style="background:#dcfce7"></span> Pay/reduce balance</span>
-      <span><span class="sw" style="background:#fef3c7"></span> Hold spending</span>
+      <span><span class="sw" style="background:#dbeafe"></span> Build/spend window</span>
+      <span><span class="sw" style="background:#dcfce7"></span> Pay previous bill</span>
+      <span><span class="sw" style="background:#fef3c7"></span> Adjust / hold</span>
       <span><span class="sw" style="background:#fee2e2"></span> Due date risk</span>
       <span><span class="sw" style="background:#ede9fe"></span> Payment reflecting</span>
     </div>
@@ -147,8 +148,21 @@ function addDays(d,n){let x=new Date(d);x.setDate(x.getDate()+n);return x}
 function sameDay(a,b){return a.getFullYear()==b.getFullYear()&&a.getMonth()==b.getMonth()&&a.getDate()==b.getDate()}
 function parseMonth(id){let [y,m]=$(id).value.split('-').map(Number);return {y:y,m:m-1}}
 function statusForUtil(u){if(u<=10)return ['Excellent','good']; if(u<=30)return ['Good','ok']; if(u<=50)return ['High','ok']; return ['Too high','bad']}
+const STORAGE_KEY='creditPlanner.userInputs.v2';
+const inputIds=['cardName','limit','newLimit','balance','apr','statementDay','dueDay','reflectDays','targetUtil','maxSpend','startMonth','calMonth'];
+function saveInputs(){
+  const data={};
+  inputIds.forEach(id=>data[id]=$(id).value);
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(data));
+}
+function loadInputs(){
+  try{
+    const data=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}');
+    inputIds.forEach(id=>{ if(data[id]!==undefined && $(id)) $(id).value=data[id]; });
+  }catch(e){}
+}
 function resetDefaults(){
-  $('cardName').value='BMO Mastercard';$('limit').value=1500;$('newLimit').value=1000;$('balance').value=300;$('apr').value=21.99;$('statementDay').value=14;$('dueDay').value=6;$('reflectDays').value=4;$('targetUtil').value=10;$('maxSpend').value=300;$('startMonth').value='2026-07';$('calMonth').value='2026-07';update();
+  $('cardName').value='BMO Mastercard';$('limit').value=1500;$('newLimit').value=1000;$('balance').value=300;$('apr').value=21.99;$('statementDay').value=14;$('dueDay').value=6;$('reflectDays').value=4;$('targetUtil').value=10;$('maxSpend').value=300;$('startMonth').value='2026-07';$('calMonth').value='2026-07';saveInputs();update();
 }
 function update(){
   const limit=Math.max(1,val('limit')), newLimit=Math.max(1,val('newLimit')), bal=val('balance'), apr=val('apr'), sDay=clamp(val('statementDay'),1,31), dDay=clamp(val('dueDay'),1,31), refl=val('reflectDays'), targetUtil=clamp(val('targetUtil'),1,30), maxSpend=val('maxSpend');
@@ -165,12 +179,15 @@ function update(){
 }
 function buildActionPlan(limit,bal,apr,sDay,dDay,refl,targetUtil,maxSpend,targetBal,maxReport){
   const reduceDay=Math.max(1,sDay-refl-1), util=bal/limit*100;
+  const afterDueStart=dDay+1;
+  const buildEnd=Math.max(afterDueStart, sDay-refl-1);
   const rows=[
-    [`Day ${dDay}`,`Pay the statement balance by the due date. If possible, pay in full to avoid purchase interest.`,`Minimum: on time`],
-    [`Day ${Math.max(1,dDay-refl)}–${dDay}`,`Payment may take ${refl} days to reflect. Make the payment early enough that it posts cleanly.`,`Pay window`],
-    [`Day ${reduceDay}–${sDay-1}`,`Reduce the balance before the statement/report day. Target ${money(targetBal)} or less for about ${targetUtil}% utilization.`,`Hot pay zone`],
-    [`Day ${sDay}`,`Statement/report day. This is the balance likely used by credit monitoring and bureaus.`,`Report: ${money(targetBal)}–${money(maxReport)}`],
-    [`Day ${sDay+1} onward`,`Safer spending window after the reported balance is captured. Keep purchases planned and affordable.`,`Cold spend zone`]
+    [`Day ${Math.max(1,dDay-refl)}–${dDay}`,`Pay the previous statement balance early enough to post cleanly. Pay in full when possible to avoid purchase interest.`,`Payment window`],
+    [`Day ${dDay}`,`Due date. This protects payment history and avoids interest if the full statement balance is paid.`,`Due date`],
+    [`Day ${afterDueStart}–${buildEnd}`,`Build the balance you want reported on the next statement. For your target, aim near ${money(targetBal)}; stay below ${money(maxReport)}.`,`Build report balance`],
+    [`Day ${reduceDay}–${sDay-1}`,`Final adjustment period. Payments may take ${refl} days to reflect, so avoid last-minute corrections unless necessary.`,`Adjust / hold`],
+    [`Day ${sDay}`,`Statement/report day. The balance here is the one likely used by monitoring and credit bureau reporting.`,`Report day`],
+    [`Day ${sDay+1} onward`,`New cycle begins after the reported balance is captured. Planned spending is safer here because it belongs to the next statement cycle.`,`New cycle`]
   ];
   $('actionPlan').innerHTML=rows.map(r=>`<div class="step"><div><b>${r[0]}</b></div><div>${r[1]}</div><div><span class="pill info">${r[2]}</span></div></div>`).join('')+
   `<div class="note ${util>30?'warning':'success'}">Current balance ${money(bal)} equals ${pct(util)} of the ${money(limit)} limit. ${util>30?'Pay down before the statement date if possible.':'This is inside the usual under-30% range.'}</div>`;
@@ -209,13 +226,17 @@ function buildCalendar(limit,sDay,dDay,refl,targetBal,maxReport){
   for(let i=0;i<start;i++) html+='<div class="day empty"></div>';
   for(let day=1;day<=days;day++){
     const cur=new Date(y,m,day); let cls='spend', tags=[];
-    const inPay=cur>=payStart && cur<=due; const inReduce=cur>=reduceStart && cur<statement; const inReflect=cur>due && cur<=addDays(due,refl);
-    if(inReflect){cls='reflect';tags.push('Reflecting')}
-    if(inPay){cls='pay';tags.push('Pay')}
-    if(inReduce){cls='hold';tags.push('Reduce/hold')}
+    const inPay=cur>=payStart && cur<=due;
+    const inBuild=day>dDay && day<sDay-refl;
+    const inReduce=cur>=reduceStart && cur<statement;
+    const inReflect=cur>due && cur<=addDays(due,refl);
+    if(inBuild){cls='spend';tags.push('Build report balance')}
+    if(inReflect){cls='reflect';tags.push('Payment reflecting')}
+    if(inPay){cls='pay';tags.push('Pay previous bill')}
+    if(inReduce){cls='hold';tags.push('Adjust / hold')}
     if(sameDay(cur,due)){cls='due';tags.push('Due date')}
     if(sameDay(cur,statement)){cls+=' statement';tags.push('Statement/report')}
-    if(tags.length===0) tags.push(day>sDay?'Safer spend':'Planned use');
+    if(tags.length===0) tags.push(day>sDay?'New cycle spend':'Planned use');
     html+=`<div class="day ${cls}"><div class="num">${day}</div>${tags.map(t=>`<span class="tag">${t}</span>`).join('')}</div>`;
   }
   $('calendar').innerHTML=html;
@@ -245,7 +266,8 @@ function buildRules(limit,targetBal,maxReport,sDay,dDay,refl,apr){
   <p><b>Best operating pattern:</b> use the card after the statement posts, pay the bill before the due date, then reduce the balance again ${refl}+ days before the next statement/report date.</p>
   <p><b>Interest rule:</b> ${apr.toFixed(2)}% purchase APR makes carried balances expensive. The cleanest plan is to let a small balance report, then pay the full statement balance by the due date.</p>`;
 }
-Array.from(document.querySelectorAll('input,select')).forEach(el=>el.addEventListener('input',update));
+loadInputs();
+Array.from(document.querySelectorAll('input,select')).forEach(el=>el.addEventListener('input',()=>{saveInputs();update();}));
 update();
 </script>
 </body>
