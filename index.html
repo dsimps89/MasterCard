@@ -67,6 +67,13 @@
   button.secondary { background: #475569; }
   .actions { display:flex; gap: 10px; flex-wrap:wrap; margin-top: 12px; }
   .checkbox { width: auto; transform: scale(1.2); }
+  .timeline { position: relative; display: grid; gap: 12px; margin-top: 12px; }
+  .timeline-step { display: grid; grid-template-columns: 110px 1fr 150px; gap: 12px; align-items: start; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fbfdff; }
+  .timeline-date { font-weight: 700; color: #0f3554; }
+  .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #eef6fd; color: #0f3554; font-size: 12px; font-weight: 700; }
+  .mini-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .readonly-box { padding: 10px; background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; font-weight: 700; }
+  @media (max-width: 760px) { .timeline-step { grid-template-columns: 1fr; } .mini-grid { grid-template-columns: 1fr; } }
   @media print {
     body { background: white; }
     header { padding: 18px; }
@@ -91,6 +98,7 @@
     <div class="card"><label>Target Reported Balance</label><input id="target" type="number" value="100" min="0" step="25" oninput="recalc()"><div class="small">Suggested: $50–$150.</div></div>
     <div class="card"><label>Statement Day</label><input id="statementDay" type="number" value="14" min="1" max="28" oninput="buildSchedule()"><div class="small">Your monitoring update/reporting cycle: 14th.</div></div>
     <div class="card"><label>Due Day</label><input id="dueDay" type="number" value="6" min="1" max="28" oninput="buildSchedule()"><div class="small">Your payment due date: 6th.</div></div>
+    <div class="card"><label>Purchase Interest APR</label><input id="purchaseApr" type="number" value="21.99" min="0" step="0.01" oninput="recalc()"><div class="small">BMO Mastercard purchase rate. Paying the full statement balance by the due date usually avoids purchase interest.</div></div>
   </section>
 
   <h2 class="section-title">Current Snapshot</h2>
@@ -99,6 +107,42 @@
     <div class="card"><label>Current Utilization</label><div id="util" class="metric">20%</div><div class="barwrap"><div id="utilBar" class="bar"></div></div></div>
     <div class="card"><label>Status</label><div id="status" class="metric status-good">Good</div><div id="statusText" class="small"></div></div>
     <div class="card"><label>Payment Needed to Hit Target</label><div id="payNeeded" class="metric">$200</div><div class="small">This is the amount to pay before the statement date if you want the target balance reported.</div></div>
+  </section>
+
+  <h2 class="section-title">Interest & Carrying Balance</h2>
+  <section class="grid">
+    <div class="card"><label>Estimated Monthly Interest on Current Balance</label><div id="monthlyInterest" class="metric">$0.00</div><div class="small">Approximation: balance × APR ÷ 12.</div></div>
+    <div class="card"><label>Estimated Yearly Interest if Carried</label><div id="yearlyInterest" class="metric">$0.00</div><div class="small">Approximation if the same balance stayed unpaid for a year.</div></div>
+    <div class="card"><label>Interest if Target Balance Carries</label><div id="targetInterest" class="metric">$0.00</div><div class="small">This shows the cost if you let the target report but do not pay it off by the due date.</div></div>
+    <div class="card"><label>Carry-Balance Warning</label><div id="interestStatus" class="metric status-good">No interest if paid in full</div><div id="interestText" class="small"></div></div>
+  </section>
+
+  <section class="card" style="margin-top:14px;">
+    <table>
+      <thead><tr><th>Carried Balance</th><th>Approx. Monthly Interest</th><th>Approx. Yearly Interest</th><th>Practical Use</th></tr></thead>
+      <tbody id="interestMatrix"></tbody>
+    </table>
+    <p class="note"><strong>Interest rule:</strong> reporting a small balance for credit scoring is different from carrying a balance after the due date. For score-building, let a small amount report, then pay the statement balance by the due date.</p>
+  </section>
+
+  <h2 class="section-title">Your Timeline</h2>
+  <section class="card">
+    <div class="mini-grid">
+      <div>
+        <label>Monthly Spending Cap</label>
+        <input id="spendCap" type="number" value="300" min="0" step="25" oninput="recalc()">
+      </div>
+      <div>
+        <label>Preferred Reported Range Low</label>
+        <input id="rangeLow" type="number" value="50" min="0" step="25" oninput="recalc()">
+      </div>
+      <div>
+        <label>Preferred Reported Range High</label>
+        <input id="rangeHigh" type="number" value="150" min="0" step="25" oninput="recalc()">
+      </div>
+    </div>
+    <div id="timeline" class="timeline"></div>
+    <p class="small"><strong>Plain rule:</strong> use the card after the statement day, pay the previous bill by the due date, then reduce the balance before the next statement/report day.</p>
   </section>
 
   <h2 class="section-title">Limit Reduction Preview</h2>
@@ -139,13 +183,14 @@
       <li>Use the card only for planned purchases you can afford.</li>
       <li>About 3–5 days before the 14th, pay the card down to your target reported balance.</li>
       <li>Let a small balance report, usually $50–$150.</li>
-      <li>Pay the full statement balance by the 6th to avoid interest.</li>
+      <li>Pay the full statement balance by the 6th to avoid purchase interest at 21.99% APR.</li>
       <li>Do not spend up to the credit limit. The limit is permission, not a budget.</li>
     </ol>
   </section>
 </main>
 <script>
 function money(n){ return '$' + Number(n).toLocaleString(undefined,{maximumFractionDigits:0}); }
+function money2(n){ return '$' + Number(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}); }
 function pct(balance, limit){ return limit > 0 ? Math.round((balance/limit)*100) : 0; }
 function rating(u){
   if (u <= 9) return ['Excellent','status-good','Best scoring range.'];
@@ -157,6 +202,7 @@ function recalc(){
   const limit = Number(document.getElementById('limit').value || 0);
   const balance = Number(document.getElementById('balance').value || 0);
   const target = Number(document.getElementById('target').value || 0);
+  const apr = Number(document.getElementById('purchaseApr').value || 0);
   const u = pct(balance, limit);
   document.getElementById('util').textContent = u + '%';
   document.getElementById('utilBar').style.width = Math.min(u,100) + '%';
@@ -165,8 +211,43 @@ function recalc(){
   s.textContent = r[0]; s.className = 'metric ' + r[1];
   document.getElementById('statusText').textContent = r[2];
   document.getElementById('payNeeded').textContent = money(Math.max(balance - target, 0));
-  buildMatrix(); buildSchedule(false);
+  buildInterest(apr, balance, target);
+  buildMatrix(); buildTimeline(); buildSchedule(false);
 }
+function buildInterest(apr, balance, target){
+  const monthlyRate = apr / 100 / 12;
+  const monthly = balance * monthlyRate;
+  const yearly = monthly * 12;
+  const targetMonthly = target * monthlyRate;
+  document.getElementById('monthlyInterest').textContent = money2(monthly);
+  document.getElementById('yearlyInterest').textContent = money2(yearly);
+  document.getElementById('targetInterest').textContent = money2(targetMonthly);
+
+  const interestStatus = document.getElementById('interestStatus');
+  const interestText = document.getElementById('interestText');
+  if (balance <= 0) {
+    interestStatus.textContent = 'No balance';
+    interestStatus.className = 'metric status-good';
+    interestText.textContent = 'No purchase interest risk while the balance is zero.';
+  } else if (monthly <= 5) {
+    interestStatus.textContent = 'Low cost if carried';
+    interestStatus.className = 'metric status-ok';
+    interestText.textContent = 'Still avoid carrying it if possible. Pay the full statement balance by the due date to keep interest at $0.';
+  } else {
+    interestStatus.textContent = 'Avoid carrying';
+    interestStatus.className = 'metric status-bad';
+    interestText.textContent = 'At 21.99% APR, carrying balances can become expensive. Prioritize full payment by the due date.';
+  }
+
+  const rows = [50,100,150,300,500,1000,1500];
+  document.getElementById('interestMatrix').innerHTML = rows.map(b => {
+    const m = b * monthlyRate;
+    const y = m * 12;
+    const use = b <= 150 ? 'Good reporting target if paid off' : b <= 300 ? 'Acceptable, avoid carrying' : 'High cost/risk if carried';
+    return `<tr><td>${money(b)}</td><td>${money2(m)}</td><td>${money2(y)}</td><td>${use}</td></tr>`;
+  }).join('');
+}
+
 function buildMatrix(){
   const rows = [50,100,150,300,450,500,750,1000];
   document.getElementById('matrix').innerHTML = rows.map(b => {
@@ -177,10 +258,57 @@ function buildMatrix(){
 }
 function monthName(d){ return d.toLocaleString('en-CA',{month:'long', year:'numeric'}); }
 function fmt(d){ return d.toLocaleDateString('en-CA',{month:'short', day:'numeric', year:'numeric'}); }
+function buildTimeline(){
+  const limit = Number(document.getElementById('limit').value || 0);
+  const balance = Number(document.getElementById('balance').value || 0);
+  const target = Number(document.getElementById('target').value || 0);
+  const low = Number(document.getElementById('rangeLow').value || 50);
+  const high = Number(document.getElementById('rangeHigh').value || 150);
+  const spendCap = Number(document.getElementById('spendCap').value || 300);
+  const apr = Number(document.getElementById('purchaseApr').value || 0);
+  const statementDay = Number(document.getElementById('statementDay').value || 14);
+  const dueDay = Number(document.getElementById('dueDay').value || 6);
+  const today = new Date(2026, 5, 27); // June 27, 2026
+  const due = new Date(2026, 6, dueDay); // July 6, 2026
+  const paydown = new Date(2026, 6, Math.max(statementDay-4,1));
+  const statement = new Date(2026, 6, statementDay);
+  const payToTarget = Math.max(balance - target, 0);
+  const utilNow = pct(balance, limit);
+  const targetUtil = pct(target, limit);
+  document.getElementById('timeline').innerHTML = `
+    <div class="timeline-step">
+      <div class="timeline-date">Now</div>
+      <div><strong>Current balance check</strong><br>Your balance is ${money(balance)}. At a ${money(limit)} limit, that is ${utilNow}% utilization.</div>
+      <div><span class="pill">Monitor</span></div>
+    </div>
+    <div class="timeline-step">
+      <div class="timeline-date">By ${fmt(due)}</div>
+      <div><strong>Pay the bill due</strong><br>Pay the full statement balance if possible. At minimum, pay the required minimum by this date to stay on time. Purchase APR is ${apr.toFixed(2)}%; any unpaid carried balance may create interest.</div>
+      <div><span class="pill">Due date</span></div>
+    </div>
+    <div class="timeline-step">
+      <div class="timeline-date">${fmt(paydown)}</div>
+      <div><strong>Pre-statement paydown</strong><br>Reduce the card to about ${money(low)}–${money(high)} before the report/statement date. Based on your current balance and target, estimated paydown needed: ${money(payToTarget)}.</div>
+      <div><span class="pill">Score setup</span></div>
+    </div>
+    <div class="timeline-step">
+      <div class="timeline-date">${fmt(statement)}</div>
+      <div><strong>Statement/report day</strong><br>Let about ${money(target)} report. That would be about ${targetUtil}% utilization at your selected limit.</div>
+      <div><span class="pill">Report day</span></div>
+    </div>
+    <div class="timeline-step">
+      <div class="timeline-date">After ${fmt(statement)}</div>
+      <div><strong>New cycle spending</strong><br>Use the card only for planned purchases. Suggested monthly cap: ${money(spendCap)}. The credit limit is not a spending goal.</div>
+      <div><span class="pill">Repeat</span></div>
+    </div>`;
+}
 function buildSchedule(reset=true){
   const statementDay = Number(document.getElementById('statementDay').value || 14);
   const dueDay = Number(document.getElementById('dueDay').value || 6);
   const target = Number(document.getElementById('target').value || 100);
+  const low = Number(document.getElementById('rangeLow')?.value || 50);
+  const high = Number(document.getElementById('rangeHigh')?.value || 150);
+  const spendCap = Number(document.getElementById('spendCap')?.value || 300);
   const tbody = document.getElementById('schedule');
   const start = new Date(2026, 6, 1); // July 2026
   let html = '';
@@ -191,11 +319,11 @@ function buildSchedule(reset=true){
     const due = new Date(m.getFullYear(), m.getMonth()+1, dueDay);
     html += `<tr>
       <td><strong>${monthName(m)}</strong></td>
-      <td>Planned spending only. Suggested cap: ${money(target)}–${money(target+200)}</td>
+      <td>Planned spending only. Suggested cap: ${money(spendCap)}</td>
       <td>${fmt(paydown)}<br><span class="small">Pay down before reporting.</span></td>
-      <td>${fmt(statement)}<br><span class="small">Aim to report ${money(target)}.</span></td>
-      <td>${fmt(due)}<br><span class="small">Pay full statement balance.</span></td>
-      <td>${money(target)}</td>
+      <td>${fmt(statement)}<br><span class="small">Aim to report ${money(low)}–${money(high)}.</span></td>
+      <td>${fmt(due)}<br><span class="small">Pay full statement balance to avoid purchase interest.</span></td>
+      <td>${money(low)}–${money(high)}<br><span class="small">Target: ${money(target)}</span></td>
       <td><input class="checkbox" type="checkbox"></td>
     </tr>`;
   }
